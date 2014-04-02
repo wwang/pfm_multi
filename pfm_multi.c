@@ -1,6 +1,6 @@
 /* 
  * This program is used to read the performance counters of a multithreaded task, 
- * and reports the PMU reads of each thread, or of each core
+ * and reports the PMU readings of each thread, or of each core
  * Usage: use option "-h" or see function "usage".
  *
  * Author: Wei Wang <wwang@virginia.edu>

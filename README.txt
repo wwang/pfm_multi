@@ -1,18 +1,11 @@
 Why I am doing this...
 
-"pfm_multi" is a remake of the old "pfmon" tool form libpfm2. "pfmon" was a very
-useful tool. Unfortunately, it disappeared after the introduction of kernel PMU
-support. Newer tools, such as "perf" or "operf", are supposed to replace "pfmon". 
-However, they miss certain features I need. "perf" does not support per-thread 
-monitoring. "operf" simply did not exist when I needed it. And it is kind hard to 
-configure it to produce result every second, which is required for my research on 
-memory systems. Also, I want something light, simple, asy to build and install.
+"pfm_multi" is a remake of the old "pfmon" tool form libpfm2. "pfmon" was a very useful tool. Unfortunately, it disappeared after the introduction of kernel PMU support. Newer tools, such as "perf" or "operf", are supposed to replace "pfmon". However, they miss certain features I need. "perf" does not support per-thread monitoring. "operf" simply did not exist when I needed it. And it is kind hard to configure it to produce result every second, which is required for my research on memory systems. Also, I want something light, simple, easy to build and install.
 
 
 Compiling pfm_multi:
 
-First you need a Linux box~ You will also need libpfm4, perf_util.c form libpfm4, 
-and some helper functions from https://github.com/wwang/common_toolx. 
+First you need a Linux box~ You will also need libpfm4, perf_util.c form libpfm4, and some helper functions from https://github.com/wwang/common_toolx. 
 
 Here are the steps:
    1. Get libpfm4, build it.
