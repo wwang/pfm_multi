@@ -8,8 +8,8 @@
  * Options for PMU reading
  */
 typedef struct __pfm_operations_options{
-  int grouped; /* whether the PMU events should be grouped */
-  int pinned; /* whether the events should be pinned to the CPU */
+	int grouped; /* whether the PMU events should be grouped */
+	int pinned; /* whether the events should be pinned to the CPU */
 }pfm_operations_options_t;
 
 /*
@@ -23,6 +23,9 @@ typedef struct __pfm_operations_options{
  */
 int pfm_operations_init();
 
+#define PFM_OP_ENABLE_ON_EXEC		(1U << 0)
+#define PFM_OP_START_DISABLED           (1U << 1)
+
 /*
  * Attach to a thread for PMU readings
  * Parameters:
@@ -35,7 +38,6 @@ int pfm_operations_init();
  *      0       --> success
  *      other   --> failed
  */
-#define PFM_OP_ENABLE_ON_EXEC		(1U << 0)
 int pfm_attach_thread(pid_t tid, char * evns, int flags, pfm_operations_options_t * options); 
 
 /*
@@ -73,7 +75,6 @@ int pfm_read_all_threads(pfm_operations_options_t * options);
  *      0       --> success
  *      other   --> failed
  */
-#define PFM_OP_COUNTER_DISABLED	(1U << 0)
 int pfm_attach_core(int cpu, char * evns, int flags, pfm_operations_options_t * options); 
 
 
@@ -92,5 +93,30 @@ int pfm_read_all_cores(pfm_operations_options_t * options);
  * Cleanup
  */
 int pfm_operations_cleanup();
+
+/*
+ * enable/disable the monitoring for one thread
+ * Parameters:
+ *	options	--> options for PMU monitoring
+ *      tid     --> id of the thread to be enabled/disabled
+ *      enabled --> 0 means to disable, 1 means to enable
+ * Return value:
+ *      0       --> success
+ *      1       --> no thread with matching tid found
+ *      2       --> thread has no events to monitor
+ */
+int pfm_enable_mon_thread(pfm_operations_options_t * options, pid_t tid, 
+			  int enabled);
+
+/*
+ * enable/disable monitoring for all cores
+ * Parameters:
+ *	options	--> options for PMU monitoring
+ *      enabled --> 0 means to disable, 1 means to enable
+ * Return value:
+ *      0       --> success
+ *      1       --> failed
+ */
+int pfm_enable_mon_core(pfm_operations_options_t * options, int enabled);
 
 #endif

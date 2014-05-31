@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <sys/ioctl.h>
 
 /* 
  * We use libpfm and helper functions from Stephane Eranian 
@@ -13,35 +14,25 @@
 #include "perf_util.h" 
 
 #include "pfm_operations.h"
-
-#ifdef __PFM_MULTI_DEBUG__
-#define DPRINTF(fmt, ...) \
-  do { fprintf(stderr, "pfm_multi debug: " fmt , ## __VA_ARGS__);} while (0);
-#else
-#define DPRINTF(fmt, ...) \
-  do {} while(0);
-#endif
-
-#define MAX_NUM_THREADS 512 /* maximum number of threads that we can handle */
-#define MAX_NUM_CORES 512 /*maximum number of cores that we can handle */
-
-
+#include "pfm_common.h"
 
 typedef struct __thread_pfm_context{
-  perf_event_desc_t *fds;
-  int num_fds;
-  pid_t tid;
-  int grouped;
+	perf_event_desc_t *fds;
+	int num_fds;
+	pid_t tid;
+	int grouped;
+	int enabled;
 }thread_pfm_context_t;
 
 thread_pfm_context_t thread_ctxs[MAX_NUM_THREADS];
 int thr_ctx_idx;
 
 typedef struct __core_pfm_context{
-  perf_event_desc_t *fds;
-  int num_fds;
-  int cpu;
-  int grouped;
+	perf_event_desc_t *fds;
+	int num_fds;
+	int cpu;
+	int grouped;
+	int enabled;
 }core_pfm_context_t;
 
 core_pfm_context_t core_ctxs[MAX_NUM_CORES];
@@ -95,6 +86,10 @@ int pfm_attach_thread(pid_t tid, char * evns, int flags, pfm_operations_options_
   thread_ctxs[thr_ctx_idx].tid = tid;
   thread_ctxs[thr_ctx_idx].fds = NULL;
   thread_ctxs[thr_ctx_idx].num_fds = 0;
+  if(flags & PFM_OP_START_DISABLED)
+	  thread_ctxs[thr_ctx_idx].enabled = 0;
+  else 
+	  thread_ctxs[thr_ctx_idx].enabled = 1;
 
   ret = perf_setup_list_events(evns, &(thread_ctxs[thr_ctx_idx].fds), &(thread_ctxs[thr_ctx_idx].num_fds));
   if(ret || !(thread_ctxs[thr_ctx_idx].num_fds))
@@ -127,18 +122,20 @@ int pfm_attach_thread(pid_t tid, char * evns, int flags, pfm_operations_options_
       /*
        * create leader disabled with enable_on-exec
        */
-      if(flags & PFM_OP_ENABLE_ON_EXEC)
-	{
-	  DPRINTF("Thread [%d] pfm enable on exec\n", tid);
-	  fds[i].hw.disabled = is_group_leader;
-	  fds[i].hw.enable_on_exec = is_group_leader;
-	}
-      else
-	{
-	  fds[i].hw.disabled = 0;
-	  fds[i].hw.enable_on_exec = 0;
-	}
-	  
+      if(flags & PFM_OP_ENABLE_ON_EXEC){
+	      DPRINTF("Thread [%d] pfm enable on exec\n", tid);
+	      fds[i].hw.disabled = is_group_leader;
+	      fds[i].hw.enable_on_exec = is_group_leader;
+      }
+      else if (flags & PFM_OP_START_DISABLED){
+	      fds[i].hw.disabled = 1;
+	      fds[i].hw.enable_on_exec = 0;
+      }
+      else{
+	      fds[i].hw.disabled = 0;
+	      fds[i].hw.enable_on_exec = 0;
+      }
+      
       fds[i].hw.read_format = PERF_FORMAT_SCALE;
      
       fds[i].hw.inherit = 0; /* only monitor the current thread */
@@ -324,7 +321,7 @@ int pfm_read_all_threads(pfm_operations_options_t * options)
   
   for(i = 0; i < thr_ctx_idx; i++)
     {
-      if(thread_ctxs[i].fds)
+      if(thread_ctxs[i].fds && thread_ctxs[i].enabled)
 	{
 	  print_thread_counts(thread_ctxs[i].tid, thread_ctxs[i].fds, thread_ctxs[i].num_fds);
 	}
@@ -355,6 +352,10 @@ int pfm_attach_core(int cpu, char * evns, int flags, pfm_operations_options_t * 
   core_ctxs[core_ctx_idx].cpu = cpu;
   core_ctxs[core_ctx_idx].fds = NULL;
   core_ctxs[core_ctx_idx].num_fds = 0;
+  if(flags & PFM_OP_START_DISABLED)
+	  core_ctxs[core_ctx_idx].enabled = 0;
+  else
+  	  core_ctxs[core_ctx_idx].enabled = 1;
 
   ret = perf_setup_list_events(evns, &(core_ctxs[core_ctx_idx].fds), &(core_ctxs[core_ctx_idx].num_fds));
   if(ret || !(core_ctxs[core_ctx_idx].num_fds))
@@ -387,7 +388,10 @@ int pfm_attach_core(int cpu, char * evns, int flags, pfm_operations_options_t * 
       /*
        * create PMU context disabled?
        */
-      fds[i].hw.disabled = flags & PFM_OP_COUNTER_DISABLED;
+      if(flags & PFM_OP_START_DISABLED)
+	      fds[i].hw.disabled = 1;
+      else
+	      fds[i].hw.disabled = 0;
       DPRINTF("CPU <%d> pfm created disabled %d\n", cpu, fds[i].hw.disabled);
 	  
       fds[i].hw.read_format = PERF_FORMAT_SCALE;
@@ -421,11 +425,100 @@ int pfm_read_all_cores(pfm_operations_options_t * options)
   
   for(i = 0; i < core_ctx_idx; i++)
     {
-      if(core_ctxs[i].fds)
+      if(core_ctxs[i].fds && core_ctxs[i].enabled)
 	{
-	  print_core_counts(core_ctxs[i].cpu, core_ctxs[i].fds, core_ctxs[i].num_fds);
+	  print_core_counts(core_ctxs[i].cpu, core_ctxs[i].fds, 
+			    core_ctxs[i].num_fds);
 	}
     }
 
   return 0;
+}
+
+int pfm_enable_mon_thread(pfm_operations_options_t * options, pid_t tid, 
+			  int enabled)
+{
+	int i;
+	int evt;
+	long request;
+	int ret_val;
+
+	if(enabled)
+		request = PERF_EVENT_IOC_ENABLE;
+	else
+		request = PERF_EVENT_IOC_DISABLE;
+	
+	for(i = 0; i < thr_ctx_idx; i++){
+		if(thread_ctxs[i].tid == tid){
+			thread_ctxs[i].enabled = enabled;
+			if(!thread_ctxs[i].fds){
+				// strange no event assoicated with this thread
+				DPRINTF("No events for thread %d when trying "
+					"to enable its events\n", tid);
+				return 2;
+			}
+
+			// print out current reading if monitoring is to 
+			// be disabled
+			if(!enabled)
+				print_thread_counts(tid, thread_ctxs[i].fds, 
+						    thread_ctxs[i].num_fds);
+			// disable the counters
+			for (evt = 0; evt < thread_ctxs[i].num_fds; evt++){
+				ret_val = ioctl(thread_ctxs[i].fds[evt].fd, 
+						request);
+				if(ret_val == -1){
+					DPRINTF("Error when enable/disable "
+						"event %s for thread %d: ",
+						thread_ctxs[i].fds[evt].name,
+						tid);
+					perror("");
+				}
+			}
+			return 0;
+		}
+	}
+	
+	return 1;
+}
+
+
+int pfm_enable_mon_core(pfm_operations_options_t * options, int enabled)
+{
+	int i;
+	int evt;
+	long request;
+	int ret_val;
+	int failed = 0;
+
+	if(enabled)
+		request = PERF_EVENT_IOC_ENABLE;
+	else
+		request = PERF_EVENT_IOC_DISABLE;
+	
+	for(i = 0; i < core_ctx_idx; i++){
+		core_ctxs[i].enabled = enabled;
+		if(core_ctxs[i].fds){
+			// print out current reading if monitoring is to 
+			// be disabled
+			if(!enabled)
+				print_core_counts(core_ctxs[i].cpu, 
+						  core_ctxs[i].fds, 
+						  core_ctxs[i].num_fds);
+			for (evt = 0; evt < core_ctxs[i].num_fds; evt++){
+				ret_val = ioctl(core_ctxs[i].fds[evt].fd, 
+						request);
+				if(ret_val == -1){
+					DPRINTF("Error when enable/disable "
+						"event %s for cpu %d: ",
+						core_ctxs[i].fds[evt].name,
+						core_ctxs[i].cpu);
+					perror("");
+					failed = 1;
+				}
+			}
+		}
+	}
+	
+  return failed;
 }

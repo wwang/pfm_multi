@@ -23,6 +23,7 @@
 #include <common_toolx.h>
 
 #include "pfm_operations.h"
+#include "pfm_trigger.h"
 
 #ifdef __PFM_MULTI_DEBUG__
 #define DPRINTF(fmt, ...) \
@@ -35,11 +36,13 @@
 #define DEFAULT_PMU_EVENTS "PERF_COUNT_HW_CPU_CYCLES,PERF_COUNT_HW_INSTRUCTIONS"
 
 typedef struct __options{
-  long print_interval;
-  pfm_operations_options_t pfm_options;
-  char * events;
-  int is_sys_wide_mon;
-  char * cores;
+	long print_interval;
+	pfm_operations_options_t pfm_options;
+	char * events;
+	int is_sys_wide_mon;
+	char * cores;
+	int use_trigger;
+	pfm_trigger_info trigger_info;
 }options_t;
 
 options_t options;
@@ -103,6 +106,7 @@ int parent_threadmon(char ** args)
   unsigned long sig;
   int event;
   pid_t new_tid;
+  int flags;
 
   /* initialize PMU monitoring */
   ret = pfm_operations_init();
@@ -144,7 +148,8 @@ int parent_threadmon(char ** args)
 
   /* attach to the first child thread */
   //pfm_attach(pid, options.events, PFM_OP_ENABLE_ON_EXEC, &(options.pfm_options));
-  pfm_attach_thread(pid, options.events, 0, &(options.pfm_options));
+  flags = 0 | (options.use_trigger?PFM_OP_START_DISABLED:0);
+  pfm_attach_thread(pid, options.events, flags, &(options.pfm_options));
 
   /*
    * child is stopped here
@@ -208,20 +213,20 @@ int parent_threadmon(char ** args)
 		  DPRINTF("FORK called by thread [%d], new process created with pid [%d]\n", tid, new_tid);
 		  if(new_tid != -1)
 		    /* attached to the new thread for PMU reading */
-		    ret = pfm_attach_thread(new_tid, options.events, 0, &(options.pfm_options)); 	      
+		    ret = pfm_attach_thread(new_tid, options.events, flags, &(options.pfm_options)); 	      
 		  break;
 		case PTRACE_EVENT_CLONE:
 		  new_tid = get_new_thread_id(tid);
 		  DPRINTF("CLONE called by thread [%d], new thread created with tid [%d]\n", tid, new_tid);	   
 		  if(new_tid != -1)
-		    ret = pfm_attach_thread(new_tid, options.events, 0, &(options.pfm_options)); /* attached to the new thread for PMU reading */
+		    ret = pfm_attach_thread(new_tid, options.events, flags, &(options.pfm_options)); /* attached to the new thread for PMU reading */
 		  break;
 		case PTRACE_EVENT_VFORK:
 		  new_tid = get_new_thread_id(tid);
 		  DPRINTF("VFORK called by thread [%d], new process created with pid [%d]\n", tid, new_tid);
 		  if(new_tid != -1)
 		    /* attached to the new thread for PMU reading */
-		    ret = pfm_attach_thread(new_tid, options.events, 0, &(options.pfm_options)); 	      
+		    ret = pfm_attach_thread(new_tid, options.events, flags, &(options.pfm_options)); 	      
 		  break;
 		case PTRACE_EVENT_EXEC:
 		  DPRINTF("EXEC called by thread [%d]\n", tid);
@@ -269,6 +274,7 @@ int parent_coremon(char ** args)
   int i, cpu_num;
 
   int status;
+  int flags;
 
   /* process cpu list */
   if(options.cores == NULL)
@@ -324,9 +330,10 @@ int parent_coremon(char ** args)
   waitpid(pid, &status, WUNTRACED);
   
   /* attach CPU monitoring contexts */
+  flags = 0 | (options.use_trigger?PFM_OP_START_DISABLED:0);
   for(i = 0; i < cpu_num; i++)
     {
-      pfm_attach_core(cpus[i], options.events, 0, &(options.pfm_options));
+      pfm_attach_core(cpus[i], options.events, flags, &(options.pfm_options));
     }
   
   /* child is stopped here */
@@ -351,7 +358,7 @@ int parent_coremon(char ** args)
   return 0;
 }
 
-static void usage(void)
+void usage(void)
 {
   printf("usage: pfm_multi [-h] [-C] [-c cpu]  [-i interval] [-g] [-p] [-e event1,event2,...] cmd\n"
 	 "-h\t\tshow this help\n"
@@ -360,8 +367,64 @@ static void usage(void)
 	 "-p\t\tpin events to cpu\n"
 	 "-C\t\tsystem wide monitoring (per-core instead of per-thread), all cores are monitored if not specified by -c\n"
 	 "-c\t\tcores to monitor (comma separated list), must be used with -C\n"
+	 "-t\t\tAllow monitored threads to enable/disable monitoring\n"
 	 "-e ev,ev\tgroup of events to measure (multiple -e switches are allowed)\n"
 	 );
+}
+
+void parse_cmdln_params(int argc, char **argv)
+{
+	int c;
+
+	/* get command line parameters */
+	options.pfm_options.grouped = 0;
+	options.pfm_options.pinned = 0;
+	options.print_interval = 0;
+	options.events = NULL;
+	options.is_sys_wide_mon = 0;
+	options.cores = NULL;
+	options.use_trigger = 0;
+	while ((c=getopt(argc, argv,"+hgpCc:i:e:t")) != -1) {
+		switch(c) {
+		case 'e':
+			printf("evens specified\n");
+			options.events = strdup(optarg);
+			break;
+		case 'i':
+			options.print_interval = atol(optarg);
+			enable_logging = 1;
+			DPRINTF("Printing interval is %ld\n", options.print_interval);
+			break;
+		case 'h':
+			usage();
+			exit(0);
+			break;
+		case 'g':
+			options.pfm_options.grouped = 1;
+			DPRINTF("Grouped is %d\n", options.pfm_options.grouped);
+			break;
+		case 'p':
+			options.pfm_options.pinned = 1;
+			DPRINTF("Pinned is %d\n", options.pfm_options.pinned);
+			break;
+		case 'C':
+			options.is_sys_wide_mon = 1;
+			DPRINTF("Is System wide monitoring\n");
+			break;
+		case 'c':
+			options.cores = strdup(optarg);
+			DPRINTF("Monitoring cores %s\n", options.cores);
+			break;
+		case 't':
+			options.use_trigger = 1;
+			DPRINTF("Allowing monitored threads trigger "
+				"monitoring\n");
+			break;
+		default:
+			errx(1, "unknown parameter, use option \"-h\" to get usage\n");
+		}
+	}
+
 }
 
 void * logging_thread(void * param)
@@ -383,58 +446,34 @@ void * logging_thread(void * param)
   return NULL;
 }
 
+void * trigger_thread(void * param)
+{
+	options_t * options = (options_t*)param;
+	pfm_trigger_info * trigger_info = &(options->trigger_info);
+	pfm_operations_options_t * pfm_options = &(options->pfm_options);
+	int ret_val;
+
+	while(1){
+		ret_val = pfm_trigger_wait_sem(trigger_info);
+		if(ret_val == 0)
+			pfm_trigger_enable(options->is_sys_wide_mon,
+					   (void*)pfm_options, trigger_info);
+	}
+
+	return NULL;
+}
+
 
 int main(int argc, char **argv)
 {
-  int c;
   pthread_t logger;
+  pthread_t trigger_thr;
   
   setlocale(LC_ALL, "");
   
   enable_logging = 0;
-
-  /* get command line parameters */
-  options.pfm_options.grouped = 0;
-  options.pfm_options.pinned = 0;
-  options.print_interval = 0;
-  options.events = NULL;
-  options.is_sys_wide_mon = 0;
-  options.cores = NULL;
-  while ((c=getopt(argc, argv,"+hgpCc:i:e:")) != -1) {
-    switch(c) {
-    case 'e':
-      printf("evens specified\n");
-      options.events = strdup(optarg);
-      break;
-    case 'i':
-      options.print_interval = atol(optarg);
-      enable_logging = 1;
-      DPRINTF("Printing interval is %ld\n", options.print_interval);
-      break;
-    case 'h':
-      usage();
-      exit(0);
-      break;
-    case 'g':
-      options.pfm_options.grouped = 1;
-      DPRINTF("Grouped is %d\n", options.pfm_options.grouped);
-      break;
-    case 'p':
-      options.pfm_options.pinned = 1;
-      DPRINTF("Pinned is %d\n", options.pfm_options.pinned);
-      break;
-    case 'C':
-      options.is_sys_wide_mon = 1;
-      DPRINTF("Is System wide monitoring\n");
-      break;
-    case 'c':
-      options.cores = strdup(optarg);
-      DPRINTF("Monitoring cores %s\n", options.cores);
-      break;
-    default:
-      errx(1, "unknown parameter, use option \"-h\" to get usage\n");
-    }
-  }
+  
+  parse_cmdln_params(argc, argv);
 
   if (!argv[optind])
     errx(1, "you must specify a command to execute\n");
@@ -449,10 +488,22 @@ int main(int argc, char **argv)
       pthread_create(&logger, NULL, logging_thread, NULL); /* create a thread for periodical PMU result output */
     }
 
+  if(options.use_trigger){
+	  pfm_open_trigger_sem(&options.trigger_info);
+	  pfm_open_trigger_mem(&options.trigger_info, options.is_sys_wide_mon);
+	  pfm_trigger_init_mem(&options.trigger_info, options.is_sys_wide_mon);
+	  pthread_create(&trigger_thr, NULL, trigger_thread, (void*)&options);
+  }
+
   if(options.is_sys_wide_mon)
     parent_coremon(argv+optind); /* system-wide (per-core) monitoring */
   else
     parent_threadmon(argv+optind); /* per-thread monitoring */
+
+  if(options.use_trigger){
+	  pfm_close_trigger_sem(&options.trigger_info);
+	  pfm_close_trigger_mem(&options.trigger_info);
+  }
   
   return 0;
 }
