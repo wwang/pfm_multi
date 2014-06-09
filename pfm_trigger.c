@@ -11,163 +11,137 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// header files used by semaphore 
-#include <fcntl.h>    
-#include <sys/stat.h> 
-#include <semaphore.h>
+// for message queue
+#include <messageQx.h>
 
-// header files used by shared memory
-#include <sys/types.h>
-#include <sys/ipc.h>
-#include <sys/shm.h>
-
-#include "pfm_trigger.h"
 #include "pfm_common.h"
+#include "pfm_trigger.h"
+#include "pfm_trigger_common.h"
 #include "pfm_operations.h"
 
-int pfm_open_trigger_sem(pfm_trigger_info * trigger)
+// data used by pfm_trigger
+typedef struct _pfm_trigger_info{
+	void *msgq;
+	int is_sys_wide;
+	int *enable_new;
+	// options is pfm_operations_options_t type, kept for future extension
+	void *pfm_op_options;
+}trigger_info;
+
+int pfm_trigger_init(void **handle, int is_sys_wide, int *enable_new, 
+		     void *pfm_op_options)
 {
-	trigger->sem = (void *)sem_open(PFM_TRIGGER_NAME, O_CREAT, 
-					S_IRUSR | S_IWUSR, 0);
-
-	if(SEM_FAILED == trigger->sem){
-		perror("Unable to open trigger semaphore");
-		exit(1);
-	}
-		
-	
-	return 0;
-}
-
-int pfm_open_trigger_mem(pfm_trigger_info * trigger, int is_sys_wide_mon)
-{	
-	key_t key;
-	int mem_size;
-
-	// convert the path to a system key
-	key = ftok(PFM_TRIGGER_MEM_FILE, PFM_TRIGGER_MEM_PROJ_ID);
-
-	if(key < 0){
-		perror("Unable to open trigger memory key");
-		exit(1);
-	}
-
-	// create the shared memory
-	if(!is_sys_wide_mon)
-		mem_size = sizeof(pfm_mon_states) + 
-			sizeof(pfm_thr_mon_state) * (MAX_NUM_THREADS-1);
-	else
-		// if system wide monitoring, then we do not need thread states
-		mem_size = sizeof(pfm_mon_states);
-	// create the shared memory
-	trigger->shm_id = shmget(key, mem_size, 
-			S_IRUSR | S_IWUSR | IPC_CREAT);
-	if(trigger->shm_id < 0){
-		perror("Unable to create trigger shared memory");
-		exit(1);
-	}
-
-	// map the shared memory to this process
-	trigger->mem = (pfm_mon_states *) shmat(trigger->shm_id, NULL, 0);
-
-	if(trigger->mem == (pfm_mon_states *)-1){
-		perror("Unable to map trigger shared memory");
-		exit(1);
-	}	
-	
-
-	return 0;
-}
-
-int pfm_trigger_init_mem(pfm_trigger_info * trigger, int is_sys_wide_mon)
-{
-	pfm_thr_mon_state * states = &(trigger->mem->states);
-	int i;
-
-	// if system wide monitoring, then we do not need thread states
-	trigger->mem->thr_cnt = is_sys_wide_mon? 0 : MAX_NUM_THREADS;
-	// system wide monitoring is disabled at beginning
-	trigger->mem->syswide_state = 0; 
-	// initialize per thread state
-	for(i = 0; i < trigger->mem->thr_cnt; i++){
-		// initialized to be disabled
-		states[i].cur_state = states[i].new_state = 0;
-	}
-
-	return 0;
-}
-
-
-int pfm_close_trigger_mem(pfm_trigger_info * trigger)
-{
-	if(shmdt(trigger->mem) != 0){
-		perror("Unable to detach trigger shared memory");
-		return 1;
-	}
-
-	if(shmctl(trigger->shm_id, IPC_RMID, 0) == -1){
-		perror("Unable to close trigger share memory object");
-		return 2;
-	}
-
-	return 0;
-}
-
-int pfm_close_trigger_sem(pfm_trigger_info * trigger)
-{
-	if(sem_close((sem_t*)trigger->sem) != 0){
-		perror("Unable to close trigger semaphore");
-		return 1;
-	}
-
-	if(sem_unlink(PFM_TRIGGER_NAME) != 0){
-		perror("Unable to unlink trigger semaphore");
-		return 2;
-	}
-
-	return 0;
-}
-
-int pfm_trigger_wait_sem(pfm_trigger_info * trigger)
-{
+	void * msgq;
 	int ret_val;
-	
-	ret_val = sem_wait(trigger->sem);
+	trigger_info *t;
 
-	if(ret_val != 0){
-		perror("Waiting on trigger semaphore failed");
+	if(handle == NULL || enable_new == NULL || pfm_op_options == NULL)
+		return 2;
+
+	*handle = NULL;
+
+	// create the message queue for communication
+	ret_val = msgqx_create(PFM_TRIGGER_MSG_NAME, sizeof(trigger_msg), 
+			       MAX_NUM_THREADS, &(msgq));
+	if(ret_val){
+		DPRINTF("Failed to create message queue for pfm trigger %d\n",
+			ret_val);
 		return 1;
 	}
 	
-	DPRINTF("Trigger semaphore posted\n");
-
+	// create the pfm_trigger handle and initialize it
+	t = (trigger_info*)calloc(1, sizeof(trigger_info));
+	t->msgq = msgq;
+	t->is_sys_wide = is_sys_wide;
+	t->enable_new = enable_new;
+	*enable_new = 0;
+	t->pfm_op_options = pfm_op_options;
+	*handle = (void*)t;
+	
 	return 0;
 }
 
-int pfm_trigger_enable(int is_sys_wide, void * options, 
-		       pfm_trigger_info * trigger)
+
+int pfm_trigger_close(void *handle)
 {
-	int i;
-	pfm_thr_mon_state * states = &(trigger->mem->states);
+	trigger_info *t = (trigger_info*)handle;
+	int ret_val = 0;
+
+	if(t == NULL || t->msgq == NULL)
+		return 1;
 	
-	if(is_sys_wide){
-		// revert system-wide monitoring state
-		trigger->mem->syswide_state = !(trigger->mem->syswide_state);
-		pfm_enable_mon_core(options, trigger->mem->syswide_state);
-	}
-	else{
-		for(i = 0; i < trigger->mem->thr_cnt; i++){
-			if(states[i].cur_state != states[i].new_state){
-				DPRINTF("New state found for thread %d (%d) to "
-					"%d \n",
-					states[i].tid, i, states[i].new_state);
-				states[i].cur_state = states[i].new_state;
-				pfm_enable_mon_thread(options, states[i].tid,
-						      states[i].new_state);
-			}
+	ret_val = msgqx_close(t->msgq);
+	ret_val = msgqx_destroy(PFM_TRIGGER_MSG_NAME);
+	
+	return ret_val;
+}
+
+
+int pfm_trigger_begin_process(void *handle)
+{
+	trigger_info *t = (trigger_info*)handle;
+	int ret_val = 0;
+	trigger_msg msg;
+	int quit = 0;
+
+	if(t == NULL || t->msgq == NULL)
+		return 1;
+
+	while(1){
+		ret_val = msgqx_receive(t->msgq, &msg);
+
+		if(ret_val){
+			fprintf(stderr, "pfm_trigger message wait error: %d",
+				ret_val);
+			continue;
 		}
+		
+		switch(msg.msg){
+		case thr_enable:
+			DPRINTF("pfm_trigger enabling thread %d\n", msg.id);
+			pfm_enable_mon_thread(t->pfm_op_options, msg.id, 1);
+			break;
+		case thr_disable:
+			DPRINTF("pfm_trigger disabling thread %d\n", msg.id);
+			pfm_enable_mon_thread(t->pfm_op_options, msg.id, 0);
+			break;
+		case cpu_enable:
+			DPRINTF("pfm_trigger enabling cpu %d\n", msg.id);
+			pfm_enable_mon_core(t->pfm_op_options, msg.id, 1);
+			break;
+		case cpu_disable:
+			DPRINTF("pfm_trigger disabling cpu %d\n", msg.id);
+			pfm_enable_mon_core(t->pfm_op_options, msg.id, 0);
+			break;
+		case all_enable:
+			DPRINTF("pfm_trigger enabling all\n");
+			*t->enable_new = 1;
+			if(t->is_sys_wide)
+				pfm_enable_mon_all_cores(t->pfm_op_options, 1);
+			else
+				pfm_enable_mon_all_threads(t->pfm_op_options, 
+							   1);
+			break;
+		case all_disable:
+			DPRINTF("pfm_trigger disabling all\n");
+			*t->enable_new = 0;
+			if(t->is_sys_wide)
+				pfm_enable_mon_all_cores(t->pfm_op_options, 0);
+			else
+				pfm_enable_mon_all_threads(t->pfm_op_options, 
+							   0);
+			break;
+		case quit_trigger:
+			DPRINTF("pfm_trigger quiting\n");
+			quit = 1;
+			break;
+		default:
+			fprintf(stderr, "Unknown message type in pfm_trigger: "
+				"%d\n", msg.msg);
+		}
+
+		if(quit) break;
 	}
 
 	return 0;
-	
 }

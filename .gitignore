@@ -1,0 +1,19 @@
+# Object files
+*.o
+
+# Libraries
+*.a
+
+# Shared objects 
+*.so
+*.so.*
+
+# Executables
+pfm_multi
+
+# backup file
+*~
+
+# not my files
+perf_util.c
+perf_util.h

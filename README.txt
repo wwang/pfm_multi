@@ -31,6 +31,12 @@ usage: pfm_multi [-h] [-C] [-c cpu]  [-i interval] [-g] [-p] [-e event1,event2,.
 -c CORE,CORE...	cores to monitor (comma separated list), must be used with -C
 -e "ev,ev"	group of events to measure (multiple -e switches are allowed); 
    		get the list of supported events from showevtinfo of libpfm4
+-t              Allow monitored threads to enable/disable monitoring; monitored 
+                threads has to call functions in pfm_trigger_lib to enjoy this function
+-D              Create low-priority dummy threads on cores being system-wide monitored; 
+                a dummy thread will keep a core busy if it is idle; use this function
+		when the cores be monitored are idle but you need it to keep counting;
+		I use this function for uncore monitoring
 cmd parameters  this is the program and its parameters you want to monitor
 
 

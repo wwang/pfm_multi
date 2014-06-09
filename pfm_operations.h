@@ -10,6 +10,8 @@
 typedef struct __pfm_operations_options{
 	int grouped; /* whether the PMU events should be grouped */
 	int pinned; /* whether the events should be pinned to the CPU */
+	int enable_new; /* whether enable monitoring on newly-created 
+			   threads/cpus */
 }pfm_operations_options_t;
 
 /*
@@ -24,7 +26,6 @@ typedef struct __pfm_operations_options{
 int pfm_operations_init();
 
 #define PFM_OP_ENABLE_ON_EXEC		(1U << 0)
-#define PFM_OP_START_DISABLED           (1U << 1)
 
 /*
  * Attach to a thread for PMU readings
@@ -97,26 +98,50 @@ int pfm_operations_cleanup();
 /*
  * enable/disable the monitoring for one thread
  * Parameters:
- *	options	--> options for PMU monitoring
+ *	pfm_op_options	--> options for PMU monitoring
  *      tid     --> id of the thread to be enabled/disabled
  *      enabled --> 0 means to disable, 1 means to enable
  * Return value:
  *      0       --> success
  *      1       --> no thread with matching tid found
- *      2       --> thread has no events to monitor
+ *      2       --> error when enabling/disabling thread monitoring
  */
-int pfm_enable_mon_thread(pfm_operations_options_t * options, pid_t tid, 
-			  int enabled);
+int pfm_enable_mon_thread(void *pfm_op_options, pid_t tid, int enabled);
+
+/*
+ * enable/disable the monitoring for all threads
+ * Parameters:
+ *	pfm_op_options	--> options for PMU monitoring
+ *      tid     --> id of the thread to be enabled/disabled
+ *      enabled --> 0 means to disable, 1 means to enable
+ * Return value:
+ *      0       --> success
+ *      1       --> error when enabling/disabling some threads
+ */
+int pfm_enable_mon_all_threads(void *pfm_op_options, int enabled);
+
+/*
+ * enable/disable the monitoring for one core
+ * Parameters:
+ *	pfm_op_options	--> options for PMU monitoring
+ *      cpu     --> id of the cpu to be enabled/disabled
+ *      enabled --> 0 means to disable, 1 means to enable
+ * Return value:
+ *      0       --> success
+ *      1       --> no core with matching cpu id found
+ *      2       --> error when enabling/disabling cpu monitoring
+ */
+int pfm_enable_mon_core(void *pfm_op_options, int cpu, int enabled);
 
 /*
  * enable/disable monitoring for all cores
  * Parameters:
- *	options	--> options for PMU monitoring
+ *	pfm_op_options	--> options for PMU monitoring
  *      enabled --> 0 means to disable, 1 means to enable
  * Return value:
  *      0       --> success
- *      1       --> failed
+ *      1       --> error when enabling/disabling some cores
  */
-int pfm_enable_mon_core(pfm_operations_options_t * options, int enabled);
+int pfm_enable_mon_all_cores(void *pfm_op_options, int enabled);
 
 #endif
