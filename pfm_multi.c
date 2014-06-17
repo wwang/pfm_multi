@@ -47,6 +47,8 @@ typedef struct __options{
 	void *trigger_info;
 	int use_dummy_thread;
 	int dummy_result; // store the results from dummy threads
+	int * run_cores; // cores to run application threads
+	int run_core_cnt; // the number of run cores
 }options_t;
 
 options_t options;
@@ -99,6 +101,87 @@ int monitor_new_thread(pid_t tid, int flags, options_t *options)
 				 &(options->pfm_options));
 }
 
+int pin_thread(pid_t tid, int core_id)
+{
+	cpu_set_t cpuset;
+	int ret_val;
+	
+	CPU_ZERO(&cpuset);
+	CPU_SET(core_id, &cpuset);
+
+	ret_val = sched_setaffinity(tid, sizeof(cpuset), &cpuset);
+	DPRINTF("Pin thread %d to core %d with result %d\n", tid, core_id,
+		ret_val);
+	
+	return ret_val;
+}
+
+/*
+ * handle the sigtrap signal for a child. 
+ *
+ * Input parameters:
+ *   tid: the tid that generates the sigtrap
+ *   status: the status of the thread
+ *   flags: performance monitoring flags
+ *   run_core_idx: the run core index to which the new thread is pinned
+ * Return value:
+ *   the signal to send to child
+ */
+int handle_sigtrap(int tid, int status, int flags, int *run_core_idx)
+{
+	int new_tid = -1;
+	int ret = 0;
+	int event;
+	
+	/*
+	 * extract event code from status (should be in
+	 * some macro)
+	 */
+	event = status >> 16;
+	switch(event) {
+	case PTRACE_EVENT_FORK:
+		new_tid = get_new_thread_id(tid);
+		DPRINTF("FORK called by thread [%d], new process created with "
+			"pid [%d]\n", tid, new_tid);
+	
+		break;
+	case PTRACE_EVENT_CLONE:
+		new_tid = get_new_thread_id(tid);
+		DPRINTF("CLONE called by thread [%d], new thread created with "
+			"tid [%d]\n", tid, new_tid);
+		break;
+	case PTRACE_EVENT_VFORK:
+		new_tid = get_new_thread_id(tid);
+		DPRINTF("VFORK called by thread [%d], new process created with "
+			"pid [%d]\n", tid, new_tid);
+		break;
+	case PTRACE_EVENT_EXEC:
+		DPRINTF("EXEC called by thread [%d]\n", tid);
+		break;
+	case  0:
+		DPRINTF("Event 0 by thread [%d]\n", tid);
+		break;
+	default: 
+		DPRINTF("Got unknown event %d, event not handled\n", event);
+	}
+	
+
+	if(new_tid != -1){
+		// pin thread
+		if(options.run_core_cnt != 0){
+			pin_thread(new_tid, options.run_cores[*run_core_idx]);
+			(*run_core_idx)++;
+			*run_core_idx = *run_core_idx % options.run_core_cnt;
+		}
+		// attach monitoring session to thread
+		if(!options.is_sys_wide_mon)
+			ret = monitor_new_thread(new_tid, flags, &options);
+	}
+	
+	return ret;
+}
+
+
 /*
  * Parent process for per-thread monitoring
  */
@@ -113,9 +196,8 @@ int parent_threadmon(char ** args)
 	struct rusage rusage;
 	int wait_type;
 	unsigned long sig;
-	int event;
-	pid_t new_tid;
 	int flags;
+	int run_core_idx = 0;
 	
 	/* initialize PMU monitoring */
 	ret = pfm_operations_init();
@@ -157,6 +239,11 @@ int parent_threadmon(char ** args)
 	//pfm_attach(pid, options.events, PFM_OP_ENABLE_ON_EXEC, 
 	// &(options.pfm_options));
 	flags = 0;
+	if(options.run_core_cnt != 0){
+		pin_thread(pid, options.run_cores[run_core_idx]);
+		run_core_idx++;
+		run_core_idx %= options.run_core_cnt;
+	}
 	pfm_attach_thread(pid, options.events, flags, &(options.pfm_options));
 
 	/*
@@ -204,49 +291,8 @@ int parent_threadmon(char ** args)
 				 * do not propagate the signal, it was for us
 				 */
 				sig = 0;
-	      
-				/*
-				 * extract event code from status (should be in
-				 * some macro)
-				 */
-				event = status >> 16;
-				switch(event) {
-				case PTRACE_EVENT_FORK:
-					new_tid = get_new_thread_id(tid);
-					DPRINTF("FORK called by thread [%d], "
-						"new process created with pid "
-						"[%d]\n", tid, new_tid);
-					ret = monitor_new_thread(new_tid, flags,
-								 &options);
-					break;
-				case PTRACE_EVENT_CLONE:
-					new_tid = get_new_thread_id(tid);
-					DPRINTF("CLONE called by thread [%d], "
-						"new thread created with tid "
-						"[%d]\n", tid, new_tid);
-					ret = monitor_new_thread(new_tid, flags,
-								 &options);
-					break;
-				case PTRACE_EVENT_VFORK:
-					new_tid = get_new_thread_id(tid);
-					DPRINTF("VFORK called by thread [%d], "
-						"new process created with pid "
-						"[%d]\n", tid, new_tid);
-					ret = monitor_new_thread(new_tid, flags,
-								 &options);
-					break;
-				case PTRACE_EVENT_EXEC:
-					DPRINTF("EXEC called by thread [%d]\n", 
-						tid);
-					break;
-				case  0:
-					DPRINTF("Event 0 by thread [%d]\n", 
-						tid);
-					break;
-				default: 
-					DPRINTF("Got unknown event %d, event "
-						"not handled\n", event);
-				}
+				sig = handle_sigtrap(tid, status, flags, 
+						     &run_core_idx);
 			}
 			else{
 				DPRINTF("Awake for thread [%d] with sig %lu, "
@@ -258,6 +304,7 @@ int parent_threadmon(char ** args)
 				//sig = 0;
 			}
 		}
+
 		
 		/*
 		 * let the child continue
@@ -283,7 +330,8 @@ void * dummy_thread(void * param){
 	int tid = gettid();
 
 	sp.sched_priority = 0;
-	sched_setscheduler(tid, SCHED_IDLE, &sp);
+	//sched_setscheduler(tid, SCHED_IDLE, &sp);
+	sched_setscheduler(tid, SCHED_BATCH, &sp);
 
 	while(p != NULL)
 		sum += sum;
@@ -298,17 +346,23 @@ void * dummy_thread(void * param){
  */
 int parent_coremon(char ** args)
 {
-	pid_t pid;
+	pid_t pid, tid;
 	int ret;
 	int * cpus;
 	int i, cpu_num;
+	int flags;
 	
 	int status;
-	int flags;
+	unsigned long ptrace_flags;
+	struct rusage rusage;
+	int wait_type;
+	unsigned long sig;
 
 	pthread_t pt;
 	pthread_attr_t attr;
 	cpu_set_t cpuset;
+
+	int run_core_idx = 0;
 	
 	/* process cpu list */
 	if(options.cores == NULL){
@@ -358,6 +412,11 @@ int parent_coremon(char ** args)
 	
 	/* wait for the child to exec */
 	waitpid(pid, &status, WUNTRACED);
+	if(options.run_core_cnt != 0){
+		pin_thread(pid, options.run_cores[run_core_idx]);
+		run_core_idx++;
+		run_core_idx %= options.run_core_cnt;		
+	}
   
 	/* attach CPU monitoring contexts */
 	flags = 0;
@@ -381,13 +440,76 @@ int parent_coremon(char ** args)
   
 	/* child is stopped here */
 	/* Detach ptrace, we don't need it anymore */
-	ret = ptrace(PTRACE_DETACH, pid, NULL, NULL);
-	if(ret == -1)
-		errx(1, "cannot detach ptrace from child\n");
-  
+	/* ret = ptrace(PTRACE_DETACH, pid, NULL, NULL); */
+	/* if(ret == -1) */
+	/* 	errx(1, "cannot detach ptrace from child\n"); */
 	/* wait for the child process to quit */
-	waitpid(pid, &status, 0);
+	/* waitpid(pid, &status, 0); */
+
 	
+	ptrace_flags = 0UL | PTRACE_O_TRACEEXEC | PTRACE_O_TRACEFORK | 
+		PTRACE_O_TRACEVFORK | PTRACE_O_TRACECLONE;
+	ret = ptrace(PTRACE_SETOPTIONS, pid, NULL, (void *)ptrace_flags);
+	if (ret == -1) 
+		errx(1, "cannot set ptrace options on child porcess [%d]\n", 
+		     pid);
+		
+  
+	/*
+	 * let the child continue
+	 */
+	child_continue(pid, 0);
+  
+	/*
+	 * WUNTRACED: PTtrace events
+	 * WNBOHANG : not block, return -1 instead
+	 * __WALL   : return info about all threads
+	 */
+	//wait_type = WUNTRACED|__WALL;
+	wait_type = __WALL;
+
+	/*
+	 * main loop that handle the child's traces
+	 */
+	while((tid = wait4(-1, &status, wait_type, &rusage)) > 0){
+
+		if (WIFEXITED(status) || WIFSIGNALED(status)){
+			DPRINTF("Thread [%d] terminated\n", tid);
+		  
+			if(tid == pid) /* main process quit */
+				break;
+			
+			continue; /* nothing else todo */
+		}
+		
+		if(WIFSTOPPED(status)){
+			sig = WSTOPSIG(status);
+			if (sig == SIGTRAP){
+				/*
+				 * do not propagate the signal, it was for us
+				 */
+				sig = 0;
+				sig = handle_sigtrap(tid, status, flags, 
+						     &run_core_idx);
+			}
+			else{
+				DPRINTF("Awake for thread [%d] with sig %lu, "
+					"event not handled\n", tid, sig);
+				/* 
+				 * Interestingly, I don't know what caused these
+				 * stops, so I just let the program proceed 
+				 */
+				//sig = 0;
+			}
+		}
+
+		
+		/*
+		 * let the child continue
+		 */
+		child_continue(tid, sig);
+	}
+  	
 	DPRINTF("Child process [%d] terminated\n", pid);
 	
 	/* print results */
@@ -414,14 +536,17 @@ void usage(void)
 	       "-t\t\tAllow monitored threads to enable/disable monitoring\n"
 	       "-e ev,ev\tgroup of events to measure (multiple -e switches are "
 	       "allowed)\n"
-	       "-d\t\tCreate low-priority threads doing dummy work on cores "
+	       "-D\t\tCreate low-priority threads doing dummy work on cores "
 	       "being system-wide monitored\n"
+	       "-P\t\tcores to run application threads (comma separated list)\n"
 	       );
 }
 
 void parse_cmdln_params(int argc, char **argv)
 {
 	int c;
+	int ret = 0;
+	
 
 	/* get command line parameters */
 	options.pfm_options.grouped = 0;
@@ -434,10 +559,10 @@ void parse_cmdln_params(int argc, char **argv)
 	options.use_trigger = 0;
 	options.trigger_info = NULL;
 	options.use_dummy_thread = 0;
-	while ((c=getopt(argc, argv,"+hgpCc:i:e:tD")) != -1) {
+	options.run_core_cnt = 0;
+	while ((c=getopt(argc, argv,"+hgpCc:i:e:tDP:")) != -1) {
 		switch(c) {
 		case 'e':
-			printf("evens specified\n");
 			options.events = strdup(optarg);
 			break;
 		case 'i':
@@ -475,6 +600,16 @@ void parse_cmdln_params(int argc, char **argv)
 		case 'D':
 			options.use_dummy_thread = 1;
 			DPRINTF("Enable dummy threads\n");
+			break;
+		case 'P':
+			ret = parse_value_list(strdup(optarg), 
+					       (void**)&options.run_cores, 
+					       &options.run_core_cnt, 0);
+			if(ret != 0)
+				errx(1, "Parsing run-core-list failed with "
+				     "error %d\n", ret);
+
+			DPRINTF("Pin threads %s\n", optarg);
 			break;
 		default:
 			errx(1, "unknown parameter, use option \"-h\" to get "
