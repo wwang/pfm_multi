@@ -26,14 +26,7 @@
 
 #include "pfm_operations.h"
 #include "pfm_trigger.h"
-
-#ifdef __PFM_MULTI_DEBUG__
-#define DPRINTF(fmt, ...) \
-  do { fprintf(stderr, "pfm_multi debug: " fmt , ## __VA_ARGS__);} while (0);
-#else
-#define DPRINTF(fmt, ...) \
-  do {} while(0);
-#endif
+#include "pfm_common.h"
 
 #define DEFAULT_PMU_EVENTS "PERF_COUNT_HW_CPU_CYCLES,PERF_COUNT_HW_INSTRUCTIONS"
 
@@ -49,11 +42,16 @@ typedef struct __options{
 	int dummy_result; // store the results from dummy threads
 	int * run_cores; // cores to run application threads
 	int run_core_cnt; // the number of run cores
+	char * output_file;
+	int append_output;
 }options_t;
 
 options_t options;
 
 int enable_logging;
+
+void * reading_out;
+void * err_out;
 
 int child_continue(pid_t tid, unsigned long sig)
 {
@@ -539,6 +537,8 @@ void usage(void)
 	       "-D\t\tCreate low-priority threads doing dummy work on cores "
 	       "being system-wide monitored\n"
 	       "-P\t\tcores to run application threads (comma separated list)\n"
+	       "-f\t\tfile to output readings and logs\n"
+	       "-a\t\tappend to output file\n"
 	       );
 }
 
@@ -560,7 +560,9 @@ void parse_cmdln_params(int argc, char **argv)
 	options.trigger_info = NULL;
 	options.use_dummy_thread = 0;
 	options.run_core_cnt = 0;
-	while ((c=getopt(argc, argv,"+hgpCc:i:e:tDP:")) != -1) {
+	options.output_file = NULL;
+	options.append_output = 0;
+	while ((c=getopt(argc, argv,"+hgpCc:i:e:tDP:f:a")) != -1) {
 		switch(c) {
 		case 'e':
 			options.events = strdup(optarg);
@@ -600,6 +602,14 @@ void parse_cmdln_params(int argc, char **argv)
 		case 'D':
 			options.use_dummy_thread = 1;
 			DPRINTF("Enable dummy threads\n");
+			break;
+		case 'f':
+			options.output_file = strdup(optarg);
+			DPRINTF("Output readings to %s\n", options.output_file);
+			break;
+		case 'a':
+			options.append_output = 1;
+			DPRINTF("Append output %s\n", options.output_file);
 			break;
 		case 'P':
 			ret = parse_value_list(strdup(optarg), 
@@ -657,7 +667,10 @@ int main(int argc, char **argv)
 	setlocale(LC_ALL, "");
   
 	enable_logging = 0;
-	
+
+	reading_out = stdout;
+	err_out = stderr;
+
 	parse_cmdln_params(argc, argv);
 	
 	if (!argv[optind])
@@ -665,6 +678,18 @@ int main(int argc, char **argv)
 	
 	if(options.events == NULL)
 		options.events = DEFAULT_PMU_EVENTS;
+
+	/* open file for output, redirect stdout and stderr */
+	if(options.output_file != NULL){
+		if(options.append_output)
+			reading_out = (void*)fopen(options.output_file, "a");
+		else
+			reading_out = (void*)fopen(options.output_file, "w");
+
+		if(reading_out == NULL)
+			err(1, "Unable to open output file.\n");
+		err_out = reading_out;
+	}
 
 	DPRINTF("Executing command %s\n", argv[optind]);
 
@@ -689,7 +714,9 @@ int main(int argc, char **argv)
 	
 	if(options.use_trigger)
 		pfm_trigger_close(&options.trigger_info);
-	
+
+	if(options.output_file != NULL)
+		fclose((FILE*)reading_out);
 	
 	return 0;
 }

@@ -231,19 +231,19 @@ void print_thread_counts(pid_t tid, perf_event_desc_t *fds, int num)
 			putchar('\n');
       
 		if (fds[i].value < fds[i].prev_value) {
-			printf("inconsistent scaling %s (cur=%'"PRIu64" : "
-			       "prev=%'"PRIu64")\n", fds[i].name, fds[i].value, 
-			       fds[i].prev_value);
+			reading_output("inconsistent scaling %s (cur=%'"PRIu64" : "
+				       "prev=%'"PRIu64")\n", fds[i].name, fds[i].value, 
+				       fds[i].prev_value);
 			continue;
 		}
-		printf("thread [%d]:%'20"PRIu64" %s (%.2f%% scaling, "
-		       "ena=%'"PRIu64", run=%'"PRIu64")\n",
-		       tid,
-		       val,
-		       fds[i].name,
-		       (1.0-ratio)*100.0,
-		       fds[i].enabled,
-		       fds[i].running);
+		reading_output("thread [%d]:%'20"PRIu64" %s (%.2f%% scaling, "
+			       "ena=%'"PRIu64", run=%'"PRIu64")\n",
+			       tid,
+			       val,
+			       fds[i].name,
+			       (1.0-ratio)*100.0,
+			       fds[i].enabled,
+			       fds[i].running);
 	}
 
 	return;
@@ -270,19 +270,19 @@ void print_core_counts(int cpu, perf_event_desc_t *fds, int num)
 			putchar('\n');
 		
 		if (fds[i].value < fds[i].prev_value) {
-			printf("inconsistent scaling %s (cur=%'"PRIu64" : "
-			       "prev=%'"PRIu64")\n", fds[i].name, fds[i].value, 
-			       fds[i].prev_value);
+			reading_output("inconsistent scaling %s (cur=%'"PRIu64" : "
+				       "prev=%'"PRIu64")\n", fds[i].name, fds[i].value, 
+				       fds[i].prev_value);
 			continue;
 		}
-		printf("CPU <%d>:%'20"PRIu64" %s (%.2f%% scaling, "
-		       "ena=%'"PRIu64", run=%'"PRIu64")\n",
-		       cpu,
-		       val,
-		       fds[i].name,
-		       (1.0-ratio)*100.0,
-		       fds[i].enabled,
-		       fds[i].running);
+		reading_output("CPU <%d>:%'20"PRIu64" %s (%.2f%% scaling, "
+			       "ena=%'"PRIu64", run=%'"PRIu64")\n",
+			       cpu,
+			       val,
+			       fds[i].name,
+			       (1.0-ratio)*100.0,
+			       fds[i].enabled,
+			       fds[i].running);
 	}
 	
 	return;

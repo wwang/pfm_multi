@@ -18,10 +18,16 @@
 
 void * msgq = NULL;
 
+void * err_out;
+void * reading_out;
+
 int pfm_trigger_user_init()
 {
 	int ret_val = 0;
 	int size;
+
+	err_out = stderr;
+	reading_out = stdout;
 
 	msgq = NULL;
 	ret_val = msgqx_open(PFM_TRIGGER_MSG_NAME, &msgq, &size);
