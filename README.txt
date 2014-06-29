@@ -37,6 +37,8 @@ usage: pfm_multi [-h] [-C] [-c cpu]  [-i interval] [-g] [-p] [-e event1,event2,.
                 a dummy thread will keep a core busy if it is idle; use this function
 		when the cores be monitored are idle but you need it to keep counting;
 		I use this function for uncore monitoring
+-f output_file  Instead of output to stdout and stderr, output to a file
+-a              Append to the output file
 cmd parameters  this is the program and its parameters you want to monitor
 
 
