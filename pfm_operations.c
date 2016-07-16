@@ -201,10 +201,12 @@ void read_counts(perf_event_desc_t *fds, int num)
 	   * scaling because we may be sharing the PMU and
 	   * thus may be multiplexed
 	   */
-	  fds[evt].prev_value = fds[evt].value;
-	  fds[evt].value = perf_scale(values);
-	  fds[evt].enabled = values[1];
-	  fds[evt].running = values[2];
+	  fds[evt].prev_values[0] = fds[evt].values[0];
+	  fds[evt].prev_values[1] = fds[evt].values[1];
+	  fds[evt].prev_values[2] = fds[evt].values[2];
+	  fds[evt].values[0] = perf_scale(values);
+	  fds[evt].values[1] = values[1];
+	  fds[evt].values[2] = values[2];
   }
 
   return;
@@ -220,20 +222,18 @@ void print_thread_counts(pid_t tid, perf_event_desc_t *fds, int num)
 		double ratio;
 		uint64_t val;
 		
-		val = fds[i].value - fds[i].prev_value;
+		val = fds[i].values[0] - fds[i].prev_values[0];
 		
-		ratio = 0.0;
-		if (fds[i].enabled)
-			ratio = 1.0 * fds[i].running / fds[i].enabled;
+		ratio = perf_scale_ratio(fds[i].values);
 		
 		/* separate groups */
 		if (perf_is_group_leader(fds, i))
 			putchar('\n');
       
-		if (fds[i].value < fds[i].prev_value) {
+		if (fds[i].values[0] < fds[i].prev_values[0]) {
 			reading_output("inconsistent scaling %s (cur=%'"PRIu64" : "
-				       "prev=%'"PRIu64")\n", fds[i].name, fds[i].value, 
-				       fds[i].prev_value);
+				       "prev=%'"PRIu64")\n", fds[i].name, fds[i].values[0], 
+				       fds[i].prev_values[0]);
 			continue;
 		}
 		reading_output("thread [%d]:%'20"PRIu64" %s (%.2f%% scaling, "
@@ -242,8 +242,8 @@ void print_thread_counts(pid_t tid, perf_event_desc_t *fds, int num)
 			       val,
 			       fds[i].name,
 			       (1.0-ratio)*100.0,
-			       fds[i].enabled,
-			       fds[i].running);
+			       fds[i].values[1],
+			       fds[i].values[2]);
 	}
 
 	return;
@@ -259,20 +259,18 @@ void print_core_counts(int cpu, perf_event_desc_t *fds, int num)
 		double ratio;
 		uint64_t val;
 		
-		val = fds[i].value - fds[i].prev_value;
+		val = fds[i].values[0] - fds[i].prev_values[0];
 		
-		ratio = 0.0;
-		if (fds[i].enabled)
-			ratio = 1.0 * fds[i].running / fds[i].enabled;
+		ratio = perf_scale_ratio(fds[i].values);
 		
 		/* separate groups */
 		if (perf_is_group_leader(fds, i))
 			putchar('\n');
 		
-		if (fds[i].value < fds[i].prev_value) {
+		if (fds[i].values[0] < fds[i].prev_values[0]) {
 			reading_output("inconsistent scaling %s (cur=%'"PRIu64" : "
-				       "prev=%'"PRIu64")\n", fds[i].name, fds[i].value, 
-				       fds[i].prev_value);
+				       "prev=%'"PRIu64")\n", fds[i].name, fds[i].values[0], 
+				       fds[i].prev_values[0]);
 			continue;
 		}
 		reading_output("CPU <%d>:%'20"PRIu64" %s (%.2f%% scaling, "
@@ -281,8 +279,8 @@ void print_core_counts(int cpu, perf_event_desc_t *fds, int num)
 			       val,
 			       fds[i].name,
 			       (1.0-ratio)*100.0,
-			       fds[i].enabled,
-			       fds[i].running);
+			       fds[i].values[1],
+			       fds[i].values[2]);
 	}
 	
 	return;

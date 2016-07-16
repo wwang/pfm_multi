@@ -1,8 +1,9 @@
 CC=gcc
 AR=ar
-CFLAGS=-c -Wall -D__PFM_MULTI_DEBUG__ -I../perfmon2-libpfm4/include/ -I../common_toolx/
-LDFLAGS=-L../perfmon2-libpfm4/lib/ -L../common_toolx/
-LIBS=-lpfm -lcommontoolx -lpthread -lrt
+LIBPFM4DIR=../libpfm-4.7.0
+CFLAGS=-c -Wall -D__PFM_MULTI_DEBUG__ -I$(LIBPFM4DIR)/include/ -I../common_toolx/
+LDFLAGS=-L../common_toolx/
+LIBS=-lcommontoolx -lpthread -lrt $(LIBPFM4DIR)/lib/libpfm.a
 ARFLAGS=rcs
 SOURCES=pfm_multi.c pfm_operations.c perf_util.c pfm_trigger.c
 INCLUDES=$(wildcard ./*.h)
