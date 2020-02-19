@@ -1,8 +1,8 @@
 CC=gcc
 AR=ar
-LIBPFM4DIR=../libpfm-4.7.0
-CFLAGS=-c -Wall -D__PFM_MULTI_DEBUG__ -I$(LIBPFM4DIR)/include/ -I../common_toolx/
-LDFLAGS=-L../common_toolx/
+LIBPFM4DIR=../libpfm-4.8.0
+CFLAGS=-c -Wall -D__PFM_MULTI_DEBUG__ -I$(LIBPFM4DIR)/include/ -I../common_toolx/ -I$(LIBPFM4DIR)/perf_examples/ -g -fno-pie -no-pie
+LDFLAGS=-L../common_toolx/ -no-pie
 LIBS=-lcommontoolx -lpthread -lrt $(LIBPFM4DIR)/lib/libpfm.a
 ARFLAGS=rcs
 SOURCES=pfm_multi.c pfm_operations.c perf_util.c pfm_trigger.c

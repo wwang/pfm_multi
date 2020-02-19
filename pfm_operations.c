@@ -143,6 +143,7 @@ int pfm_attach_thread(pid_t tid, char * evns, int flags,
      
 		fds[i].fd = perf_event_open(&fds[i].hw, tid, -1, group_fd, 0);
 		if (fds[i].fd == -1) {
+			printf("failed here\n");
 			warn("cannot attach event%d %s to thread [%d]: ", i, 
 			     fds[i].name, tid);
 			goto error;
